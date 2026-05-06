@@ -1,0 +1,414 @@
+BraTS 欠采样数据生成脚本：命令行启动参数说明
+====================================================
+
+一、脚本文件
+------------
+
+脚本名称：
+
+    generate_brats_undersampling_v3.py
+
+功能：
+
+    从 BraTS 数据集中读取 T2 模态 .nii.gz 文件，
+    批量生成 k-space 欠采样数据和可视化图片。
+
+主要任务：
+
+    1. 读取 *_t2.nii.gz
+    2. 将 3D volume 转为多个 2D slices
+    3. 对每张 2D slice 做 2D FFT
+    4. 生成 2D random variable-density undersampling mask
+    5. 用 mask 对 k-space 欠采样
+    6. IFFT 得到 aliased image
+    7. 保存 PNG / NPY / NPZ 文件
+
+
+二、安装依赖
+------------
+
+运行脚本前，需要安装：
+
+    pip install nibabel numpy matplotlib
+
+
+三、Windows 测试启动命令：默认 uniform 选片
+------------------------------------------
+
+建议先只处理 2 个病例，确认输出正常。
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "D:\BraTS\BraTS2021_Training_Data" ^
+      --output_root "D:\BraTS\undersampling_output_test" ^
+      --acceleration 5 ^
+      --center_fraction 0.08 ^
+      --num_slices_per_case 5 ^
+      --min_nonzero_ratio 0.02 ^
+      --slice_select_mode uniform ^
+      --save_npy ^
+      --save_npz ^
+      --max_cases 2 ^
+      --seed 42
+
+说明：
+
+    uniform 是默认模式。
+    即使不写 --slice_select_mode uniform，也会按 uniform 处理。
+
+
+四、Windows 测试启动命令：largest 选片
+-------------------------------------
+
+如果你希望优先选择脑部区域较大的 slice，可以使用 largest：
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "D:\BraTS\BraTS2021_Training_Data" ^
+      --output_root "D:\BraTS\undersampling_output_test_largest" ^
+      --acceleration 5 ^
+      --center_fraction 0.08 ^
+      --num_slices_per_case 5 ^
+      --min_nonzero_ratio 0.02 ^
+      --slice_select_mode largest ^
+      --save_npy ^
+      --save_npz ^
+      --max_cases 2 ^
+      --seed 42
+
+largest 更适合后续训练，因为它通常会减少空背景比例。
+
+
+五、Windows 正式启动命令：推荐训练数据版本
+------------------------------------------
+
+测试没有问题后，可以去掉 --max_cases 2，处理全部病例：
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "D:\BraTS\BraTS2021_Training_Data" ^
+      --output_root "D:\BraTS\undersampling_output_largest" ^
+      --acceleration 5 ^
+      --center_fraction 0.08 ^
+      --num_slices_per_case 5 ^
+      --min_nonzero_ratio 0.02 ^
+      --slice_select_mode largest ^
+      --save_npy ^
+      --save_npz ^
+      --seed 42
+
+如果主要用于 Task 1 展示，也可以使用 uniform：
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "D:\BraTS\BraTS2021_Training_Data" ^
+      --output_root "D:\BraTS\undersampling_output_uniform" ^
+      --acceleration 5 ^
+      --center_fraction 0.08 ^
+      --num_slices_per_case 5 ^
+      --min_nonzero_ratio 0.02 ^
+      --slice_select_mode uniform ^
+      --save_npy ^
+      --save_npz ^
+      --seed 42
+
+
+六、只生成报告图片的启动命令
+----------------------------
+
+如果只想完成第一部分可视化，不想生成大量 .npy 和 .npz 文件，可以这样运行：
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "D:\BraTS\BraTS2021_Training_Data" ^
+      --output_root "D:\BraTS\undersampling_output_png_only" ^
+      --acceleration 5 ^
+      --center_fraction 0.08 ^
+      --num_slices_per_case 5 ^
+      --min_nonzero_ratio 0.02 ^
+      --slice_select_mode uniform ^
+      --seed 42
+
+这个命令不会保存：
+
+    .npy
+    .npz
+
+只会保存：
+
+    *_full.png
+    *_mask.png
+    *_aliased.png
+    *_comparison.png
+
+
+七、PowerShell 中文路径示例
+--------------------------
+
+你当前这种路径也可以直接使用：
+
+    python generate_brats_undersampling_v3.py `
+      --data_root "D:/课程/人工智能在医学影像中的应用/data/BraTS2021_Training_Data" `
+      --output_root "D:/课程/人工智能在医学影像中的应用/data/to_dzq_largest" `
+      --acceleration 5 `
+      --center_fraction 0.08 `
+      --num_slices_per_case 5 `
+      --min_nonzero_ratio 0.02 `
+      --slice_select_mode largest `
+      --save_npy `
+      --save_npz `
+      --max_cases 2 `
+      --seed 42
+
+注意：
+
+    PowerShell 使用反引号 ` 换行。
+    反引号必须是每行最后一个字符，后面不能有空格。
+
+
+八、Linux / Mac 测试启动命令
+----------------------------
+
+    python generate_brats_undersampling_v3.py \
+      --data_root "/home/Downloads/dataset/BraTS2021_Training_Data" \
+      --output_root "/home/Downloads/dataset/undersampling_output_test" \
+      --acceleration 5 \
+      --center_fraction 0.08 \
+      --num_slices_per_case 5 \
+      --min_nonzero_ratio 0.02 \
+      --slice_select_mode largest \
+      --save_npy \
+      --save_npz \
+      --max_cases 2 \
+      --seed 42
+
+
+九、参数逐项解释
+----------------
+
+1. --data_root
+
+    BraTS 数据集根目录。
+
+    脚本会从这个目录开始递归查找：
+
+        *_t2.nii.gz
+
+2. --output_root
+
+    生成结果的保存目录。
+
+3. --acceleration
+
+    欠采样加速因子。
+
+    acceleration = 5 表示：
+
+        大约只保留 1/5 的 k-space 点
+        也就是大约 20% 采样率
+
+4. --center_fraction
+
+    k-space 中心区域全采样比例。
+
+    默认：
+
+        0.08
+
+5. --num_slices_per_case
+
+    每个病例选取多少张有效 2D slice 进行处理。
+
+    如果设置为 5：
+
+        每个病例输出 5 组 slice 结果。
+
+    如果设置为 0 或负数：
+
+        保存该病例中所有有效 slice。
+
+6. --min_nonzero_ratio
+
+    用来过滤太空的 slice。
+
+    如果某张 slice 中非零像素比例小于该阈值，
+    脚本会跳过这张 slice。
+
+    默认：
+
+        0.02
+
+    如果你发现脑部占图像区域太小，可以尝试：
+
+        0.08
+        0.10
+
+7. --slice_select_mode
+
+    新增参数。
+
+    可选值：
+
+        uniform
+        largest
+
+    默认：
+
+        uniform
+
+    uniform：
+
+        从有效 slice 中均匀选取。
+        覆盖范围更广。
+        适合 Task 1 可视化展示。
+
+    largest：
+
+        选择脑部非零区域最大的 slice 附近的一组 slice。
+        通常脑部主体更大，空背景更少。
+        更适合后续训练 Task 2 模型。
+
+    推荐：
+
+        Task 1 展示：uniform 或 largest 都可以。
+        Task 2 训练：更推荐 largest。
+
+8. --save_npy
+
+    保存单独的 .npy 文件。
+
+    会额外生成：
+
+        *_full.npy
+        *_mask.npy
+        *_kspace_full.npy
+        *_kspace_und.npy
+        *_aliased.npy
+
+    如果不加这个参数，就不会保存 .npy 文件。
+
+9. --save_npz
+
+    保存打包的 .npz 样本文件。
+
+    会额外生成：
+
+        *_sample.npz
+
+    后续训练建议加上这个参数。
+
+10. --max_cases
+
+    最多处理多少个病例。
+
+    如果设置为 2：
+
+        只处理前 2 个病例。
+
+    如果设置为 0：
+
+        处理所有病例。
+
+    默认：
+
+        0
+
+11. --seed
+
+    随机种子。
+
+    用途：
+
+        控制随机 mask 的生成，使实验可复现。
+
+
+十、推荐运行流程
+----------------
+
+第一步：小规模测试 uniform
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "你的 BraTS2021_Training_Data 路径" ^
+      --output_root "你的输出路径\undersampling_output_test_uniform" ^
+      --acceleration 5 ^
+      --num_slices_per_case 5 ^
+      --slice_select_mode uniform ^
+      --save_npz ^
+      --max_cases 2
+
+第二步：小规模测试 largest
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "你的 BraTS2021_Training_Data 路径" ^
+      --output_root "你的输出路径\undersampling_output_test_largest" ^
+      --acceleration 5 ^
+      --num_slices_per_case 5 ^
+      --slice_select_mode largest ^
+      --save_npz ^
+      --max_cases 2
+
+第三步：比较两个输出目录中的 *_comparison.png
+
+    如果只是做报告展示，选图像清楚、伪影明显的即可。
+    如果后续要训练模型，更推荐 largest 版本。
+
+第四步：正式生成数据
+
+    python generate_brats_undersampling_v3.py ^
+      --data_root "你的 BraTS2021_Training_Data 路径" ^
+      --output_root "你的输出路径\undersampling_output_final" ^
+      --acceleration 5 ^
+      --center_fraction 0.08 ^
+      --num_slices_per_case 5 ^
+      --min_nonzero_ratio 0.02 ^
+      --slice_select_mode largest ^
+      --save_npy ^
+      --save_npz ^
+      --seed 42
+
+
+十一、常见问题
+--------------
+
+1. 提示找不到 *_t2.nii.gz
+
+    可能原因：
+
+        数据还没有完全解压。
+        --data_root 路径写错。
+        当前目录下没有 BraTS 病例文件夹。
+
+2. 输出图片太多
+
+    解决：
+
+        先用 --max_cases 2 测试。
+        减少 --num_slices_per_case。
+        去掉 --save_npy。
+
+3. 脑部占图片区域太小
+
+    解决：
+
+        使用 --slice_select_mode largest
+
+    或者提高：
+
+        --min_nonzero_ratio 0.08
+        --min_nonzero_ratio 0.10
+
+4. 只想交第一部分报告
+
+    可以只保存 PNG：
+
+        不加 --save_npy
+        不加 --save_npz
+
+    最重要的报告图片是：
+
+        *_comparison.png
+
+5. 后面要训练模型
+
+    建议加：
+
+        --save_npz
+
+    并优先考虑：
+
+        --slice_select_mode largest

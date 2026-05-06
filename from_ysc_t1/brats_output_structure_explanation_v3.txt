@@ -1,0 +1,449 @@
+BraTS 欠采样数据生成结果：目录结构与文件解释
+================================================
+
+一、总体说明
+------------
+
+本说明对应脚本：
+
+    generate_brats_undersampling_v3.py
+
+脚本功能：
+
+    读取 BraTS 数据集中每个病例的 T2 模态文件：
+        *_t2.nii.gz
+
+    将 3D T2 volume 切成若干 2D slice，然后对每张 slice 进行：
+
+        1. 图像归一化
+        2. 2D FFT，得到 fully sampled k-space
+        3. 生成 2D random variable-density undersampling mask
+        4. 用 mask 对 k-space 进行欠采样
+        5. 2D IFFT，得到 aliased image
+        6. 保存 PNG / NPY / NPZ 文件
+
+默认设置：
+
+    acceleration factor = 5
+    slice_select_mode = uniform
+
+也就是：
+
+    大约只保留 1/5 的 k-space 采样点；
+    默认从有效 slice 中均匀选取若干张。
+
+
+二、推荐输出目录结构
+--------------------
+
+假设输出目录设置为：
+
+    D:\BraTS\undersampling_output
+
+脚本运行后，目录结构大致如下：
+
+    undersampling_output/
+    ├── BraTS2021_00000/
+    │   ├── BraTS2021_00000_slice_056_full.png
+    │   ├── BraTS2021_00000_slice_056_mask.png
+    │   ├── BraTS2021_00000_slice_056_aliased.png
+    │   ├── BraTS2021_00000_slice_056_comparison.png
+    │   ├── BraTS2021_00000_slice_056_full.npy
+    │   ├── BraTS2021_00000_slice_056_mask.npy
+    │   ├── BraTS2021_00000_slice_056_kspace_full.npy
+    │   ├── BraTS2021_00000_slice_056_kspace_und.npy
+    │   ├── BraTS2021_00000_slice_056_aliased.npy
+    │   ├── BraTS2021_00000_slice_056_sample.npz
+    │   ├── BraTS2021_00000_slice_072_full.png
+    │   ├── BraTS2021_00000_slice_072_mask.png
+    │   ├── BraTS2021_00000_slice_072_aliased.png
+    │   ├── BraTS2021_00000_slice_072_comparison.png
+    │   ├── BraTS2021_00000_slice_072_sample.npz
+    │   └── ...
+    │
+    ├── BraTS2021_00002/
+    │   ├── BraTS2021_00002_slice_055_full.png
+    │   ├── BraTS2021_00002_slice_055_mask.png
+    │   ├── BraTS2021_00002_slice_055_aliased.png
+    │   ├── BraTS2021_00002_slice_055_comparison.png
+    │   ├── BraTS2021_00002_slice_055_sample.npz
+    │   └── ...
+    │
+    └── ...
+
+
+三、目录层级解释
+----------------
+
+1. undersampling_output/
+
+    总输出目录。
+
+    这个目录由命令行参数 --output_root 指定。
+
+2. BraTS2021_00000/、BraTS2021_00002/ 等
+
+    每个病例一个文件夹。
+
+    文件夹名来自原始 BraTS 病例目录名。
+
+3. BraTS2021_00000_slice_056_xxx
+
+    表示：
+
+        病例：BraTS2021_00000
+        slice 编号：056
+
+    也就是说，这一组文件都来自同一张 2D T2 slice。
+
+
+四、slice 选择模式说明
+---------------------
+
+脚本新增参数：
+
+    --slice_select_mode
+
+可选值：
+
+    uniform
+    largest
+
+1. uniform
+
+    默认模式。
+
+    从所有有效 slice 中均匀选取若干张。
+
+    优点：
+
+        覆盖范围更广，可以看到从头顶到底部的不同解剖位置。
+
+    缺点：
+
+        可能选到脑部占图像面积较小的顶部或底部 slice。
+
+    适合：
+
+        Task 1 可视化展示；
+        想观察不同 slice 欠采样效果的情况。
+
+2. largest
+
+    优先选择脑部非零区域最大的 slice 附近的一组 slice。
+
+    具体逻辑：
+
+        先过滤掉非零区域占比过低的 slice；
+        找到非零像素比例最大的 slice；
+        以它为中心，选取附近的 num_slices_per_case 张 slice。
+
+    优点：
+
+        脑部主体区域通常更大；
+        空背景比例更低；
+        更适合后续训练重建模型。
+
+    缺点：
+
+        解剖位置覆盖不如 uniform 广。
+
+    适合：
+
+        Task 2 训练数据生成；
+        希望减少空背景对 MSE / PSNR / SSIM 的影响。
+
+
+五、每个 2D slice 会生成哪些文件？
+---------------------------------
+
+如果同时使用：
+
+    --save_npy
+    --save_npz
+
+那么每个 slice 会生成：
+
+    1. 4 张 PNG 图片
+    2. 5 个 NPY 数组文件
+    3. 1 个 NPZ 打包样本文件
+
+即：
+
+    *_full.png
+    *_mask.png
+    *_aliased.png
+    *_comparison.png
+
+    *_full.npy
+    *_mask.npy
+    *_kspace_full.npy
+    *_kspace_und.npy
+    *_aliased.npy
+
+    *_sample.npz
+
+如果不加 --save_npy，则不会保存 .npy 文件。
+如果不加 --save_npz，则不会保存 .npz 文件。
+
+
+六、PNG 文件解释
+----------------
+
+1. *_full.png
+
+    完整采样的 T2 图像。
+    也就是 fully sampled image / ground truth image。
+
+2. *_mask.png
+
+    k-space 欠采样 mask。
+
+    白色位置表示该 k-space 点被保留。
+    黑色位置表示该 k-space 点被丢弃。
+
+3. *_aliased.png
+
+    欠采样 k-space 经过 IFFT 后得到的 aliased image。
+
+    这张图像会出现混叠伪影、模糊或结构扭曲。
+
+4. *_comparison.png
+
+    三联图，包含：
+
+        Sampling Mask
+        Fully Sampled T2
+        Aliased Image
+
+    最适合直接放进报告的第一部分。
+
+
+七、NPY 文件解释
+----------------
+
+只有加入 --save_npy 参数时才会生成这些文件。
+
+1. *_full.npy
+
+    完整采样 T2 图像数组。
+
+    通常 shape 为：
+
+        [H, W]
+
+    BraTS 常见大小为：
+
+        [240, 240]
+
+    dtype 通常为：
+
+        float32
+
+2. *_mask.npy
+
+    欠采样 mask 数组。
+
+    shape：
+
+        [H, W]
+
+    取值：
+
+        0 或 1
+
+3. *_kspace_full.npy
+
+    完整 k-space。
+
+    由完整图像做 2D FFT 得到：
+
+        kspace_full = FFT(full_img)
+
+    dtype：
+
+        complex64
+
+4. *_kspace_und.npy
+
+    欠采样 k-space。
+
+    由完整 k-space 乘以 mask 得到：
+
+        kspace_und = kspace_full * mask
+
+    dtype：
+
+        complex64
+
+5. *_aliased.npy
+
+    欠采样重建图像。
+
+    由欠采样 k-space 做 IFFT 得到：
+
+        aliased = IFFT(kspace_und)
+
+    dtype：
+
+        float32
+
+
+八、NPZ 文件解释
+----------------
+
+只有加入 --save_npz 参数时才会生成这个文件。
+
+示例：
+
+    BraTS2021_00000_slice_056_sample.npz
+
+这是一个压缩打包文件，方便后续训练模型时读取。
+
+里面包含：
+
+    k_und
+    mask
+    im_gt
+    im_und
+    k_full
+    case_id
+    slice_idx
+    acceleration
+    center_fraction
+
+字段解释：
+
+1. k_und
+
+    欠采样 k-space。
+
+    dtype：
+
+        complex64
+
+2. mask
+
+    欠采样 mask。
+
+    dtype：
+
+        float32
+
+3. im_gt
+
+    完整 T2 图像。
+
+    用途：
+
+        训练标签。
+
+4. im_und
+
+    欠采样重建图像，也就是 aliased image。
+
+    用途：
+
+        基础 U-Net / ResNet / DenseNet 重建模型的输入。
+
+5. k_full
+
+    完整 k-space。
+
+    用途：
+
+        调试；
+        进一步实验；
+        与 k_und 对比。
+
+6. case_id
+
+    病例 ID。
+
+7. slice_idx
+
+    当前 slice 在 3D volume 中的编号。
+
+8. acceleration
+
+    加速因子。
+
+9. center_fraction
+
+    k-space 中心全采样区域比例。
+
+
+九、后续训练时如何读取 NPZ？
+----------------------------
+
+示例代码：
+
+    import numpy as np
+
+    sample = np.load("BraTS2021_00000_slice_056_sample.npz")
+
+    k_und = sample["k_und"]
+    mask = sample["mask"]
+    im_gt = sample["im_gt"]
+    im_und = sample["im_und"]
+
+最基础的图像到图像重建模型可以使用：
+
+    x = im_und
+    y = im_gt
+
+也就是：
+
+    输入：带伪影的 aliased image
+    标签：完整采样 fully sampled image
+
+如果后续使用更 MRI 风格的重建框架，可以使用：
+
+    输入：k_und + mask
+    标签：im_gt
+
+
+十、输出数量估算
+----------------
+
+如果设置：
+
+    --num_slices_per_case 5
+    --save_npy
+    --save_npz
+
+那么每个病例会输出：
+
+    每个 slice：
+        4 张 PNG
+        5 个 NPY
+        1 个 NPZ
+
+    共 10 个文件。
+
+    每个病例 5 张 slice：
+
+        5 × 10 = 50 个文件
+
+如果只保存 PNG，不加 --save_npy 和 --save_npz：
+
+    每个 slice 4 张 PNG
+    每个病例 5 张 slice：
+
+        5 × 4 = 20 张 PNG
+
+
+十一、推荐用于报告的文件
+------------------------
+
+报告第一部分最推荐使用：
+
+    *_comparison.png
+
+因为它已经把以下三项放在一张图中：
+
+    1. sampling mask
+    2. fully sampled image
+    3. aliased image
+
+这正好对应 Task 1 的可视化要求。
