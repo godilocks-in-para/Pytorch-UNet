@@ -16,11 +16,12 @@ from tqdm import tqdm
 import wandb
 from evaluate import evaluate
 from unet import UNet
-from utils.data_loading import BasicDataset, CarvanaDataset
-from utils.dice_score import dice_loss
+from utils.data_loading import BasicDataset
+# from utils.dice_score import dice_loss
+from utils.utils import calculate_psnr, calculate_ssim
 
-dir_img = Path('./data/imgs/')
-dir_mask = Path('./data/masks/')
+dir_img_und = Path('./data/img-und/')
+dir_img_full = Path('./data/img-full/')
 dir_checkpoint = Path('./checkpoints/')
 
 
@@ -31,6 +32,7 @@ def train_model(
         batch_size: int = 1,
         learning_rate: float = 1e-5,
         val_percent: float = 0.1,
+        test_percent: float = 0.1,
         save_checkpoint: bool = True,
         img_scale: float = 0.5,
         amp: bool = False,
@@ -38,27 +40,26 @@ def train_model(
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
 ):
-    # 1. Create dataset
-    try:
-        dataset = CarvanaDataset(dir_img, dir_mask, img_scale)
-    except (AssertionError, RuntimeError, IndexError):
-        dataset = BasicDataset(dir_img, dir_mask, img_scale)
+    # 1. Create dataset 
+    dataset = BasicDataset(dir_img_und, dir_img_full, img_scale)
 
     # 2. Split into train / validation partitions
     n_val = int(len(dataset) * val_percent)
-    n_train = len(dataset) - n_val
-    train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
+    n_test = int(len(dataset) * test_percent)
+    n_train = len(dataset) - n_val - n_test
+    train_set, val_set, test_set = random_split(dataset, [n_train, n_val, n_test], generator=torch.Generator().manual_seed(0))
 
     # 3. Create data loaders
     loader_args = dict(batch_size=batch_size, num_workers=os.cpu_count(), pin_memory=True)
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
     val_loader = DataLoader(val_set, shuffle=False, drop_last=True, **loader_args)
+    test_loader = DataLoader(test_set, shuffle=False, drop_last=True, **loader_args)
 
     # (Initialize logging)
     experiment = wandb.init(project='U-Net', resume='allow', anonymous='must')
     experiment.config.update(
         dict(epochs=epochs, batch_size=batch_size, learning_rate=learning_rate,
-             val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
+             val_percent=val_percent, test_percent=test_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
     )
 
     logging.info(f'''Starting training:
@@ -67,6 +68,7 @@ def train_model(
         Learning rate:   {learning_rate}
         Training size:   {n_train}
         Validation size: {n_val}
+        Test size:       {n_test}
         Checkpoints:     {save_checkpoint}
         Device:          {device.type}
         Images scaling:  {img_scale}
@@ -75,10 +77,16 @@ def train_model(
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
     optimizer = optim.RMSprop(model.parameters(),
-                              lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5)  # goal: maximize Dice score
+                          lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
+
+    # 修改调度器：监控验证损失（'min' 模式）而不是 Dice
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=5)  # goal: minimize reconstruction loss
+
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
-    criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss()
+
+    # 修改损失函数：使用 MSE Loss (L2 Loss)
+    criterion = nn.MSELoss()  # 或者 nn.L1Loss() 作为 L1 Loss
+
     global_step = 0
 
     # 5. Begin training
@@ -87,28 +95,20 @@ def train_model(
         epoch_loss = 0
         with tqdm(total=n_train, desc=f'Epoch {epoch}/{epochs}', unit='img') as pbar:
             for batch in train_loader:
-                images, true_masks = batch['image'], batch['mask']
+                images_und, true_image_full = batch['img_und'], batch['img_full']
 
-                assert images.shape[1] == model.n_channels, \
+                assert images_und.shape[1] == model.n_channels, \
                     f'Network has been defined with {model.n_channels} input channels, ' \
-                    f'but loaded images have {images.shape[1]} channels. Please check that ' \
-                    'the images are loaded correctly.'
+                    f'but loaded images_und have {images_und.shape[1]} channels. Please check that ' \
+                    'the images_und are loaded correctly.'
 
-                images = images.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
-                true_masks = true_masks.to(device=device, dtype=torch.long)
+                images_und = images_und.to(device=device, dtype=torch.float32, memory_format=torch.channels_last)
+                true_image_full = true_image_full.to(device=device, dtype=torch.float32)
 
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
-                    masks_pred = model(images)
-                    if model.n_classes == 1:
-                        loss = criterion(masks_pred.squeeze(1), true_masks.float())
-                        loss += dice_loss(F.sigmoid(masks_pred.squeeze(1)), true_masks.float(), multiclass=False)
-                    else:
-                        loss = criterion(masks_pred, true_masks)
-                        loss += dice_loss(
-                            F.softmax(masks_pred, dim=1).float(),
-                            F.one_hot(true_masks, model.n_classes).permute(0, 3, 1, 2).float(),
-                            multiclass=True
-                        )
+                    img_full_pred = model(images_und)
+                    loss = criterion(img_full_pred.squeeze(1), true_image_full.float())
+                        
 
                 optimizer.zero_grad(set_to_none=True)
                 grad_scaler.scale(loss).backward()
@@ -117,11 +117,13 @@ def train_model(
                 grad_scaler.step(optimizer)
                 grad_scaler.update()
 
-                pbar.update(images.shape[0])
+                pbar.update(images_und.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
                 experiment.log({
                     'train loss': loss.item(),
+                    'train PSNR': calculate_psnr(img_full_pred, true_image_full),
+                    'train SSIM': calculate_ssim(img_full_pred, true_image_full),
                     'step': global_step,
                     'epoch': epoch
                 })
@@ -139,18 +141,18 @@ def train_model(
                             if not (torch.isinf(value.grad) | torch.isnan(value.grad)).any():
                                 histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
-                        val_score = evaluate(model, val_loader, device, amp)
-                        scheduler.step(val_score)
-
-                        logging.info('Validation Dice score: {}'.format(val_score))
+                        val_loss, val_psnr = evaluate(model, val_loader, device, amp)  # 新写的评估函数
+                        scheduler.step(val_loss)  # 监控验证损失（'min'模式）
+                    
+                        logging.info(f'Validation Loss: {val_loss:.6f}, Validation PSNR: {val_psnr:.2f} dB')
                         try:
                             experiment.log({
                                 'learning rate': optimizer.param_groups[0]['lr'],
-                                'validation Dice': val_score,
-                                'images': wandb.Image(images[0].cpu()),
-                                'masks': {
-                                    'true': wandb.Image(true_masks[0].float().cpu()),
-                                    'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
+                                'validation loss': val_loss,
+                                'images_und': wandb.Image(images_und[0].cpu()),
+                                'images_full': {
+                                    'true': wandb.Image(true_image_full[0].float().cpu()),
+                                    'pred': wandb.Image(img_full_pred.argmax(dim=1)[0].float().cpu()),
                                 },
                                 'step': global_step,
                                 'epoch': epoch,
@@ -168,18 +170,18 @@ def train_model(
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
+    parser = argparse.ArgumentParser(description='Train the UNet on images_und and target images_full')
     parser.add_argument('--epochs', '-e', metavar='E', type=int, default=5, help='Number of epochs')
     parser.add_argument('--batch-size', '-b', dest='batch_size', metavar='B', type=int, default=1, help='Batch size')
     parser.add_argument('--learning-rate', '-l', metavar='LR', type=float, default=1e-5,
                         help='Learning rate', dest='lr')
     parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
-    parser.add_argument('--scale', '-s', type=float, default=0.5, help='Downscaling factor of the images')
+    parser.add_argument('--scale', '-s', type=float, default=1, help='Downscaling factor of the images_und')
     parser.add_argument('--validation', '-v', dest='val', type=float, default=10.0,
                         help='Percent of the data that is used as validation (0-100)')
     parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
     parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
-    parser.add_argument('--classes', '-c', type=int, default=2, help='Number of classes')
+    parser.add_argument('--classes', '-c', type=int, default=1, help='Number of classes')
 
     return parser.parse_args()
 
@@ -192,9 +194,9 @@ if __name__ == '__main__':
     logging.info(f'Using device {device}')
 
     # Change here to adapt to your data
-    # n_channels=3 for RGB images
+    # n_channels=3 for RGB images_und
     # n_classes is the number of probabilities you want to get per pixel
-    model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+    model = UNet(n_channels=1, n_classes=args.classes, bilinear=args.bilinear)
     model = model.to(memory_format=torch.channels_last)
 
     logging.info(f'Network:\n'

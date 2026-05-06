@@ -12,26 +12,51 @@ from utils.data_loading import BasicDataset
 from unet import UNet
 from utils.utils import plot_img_and_mask
 
-def predict_img(net,
-                full_img,
-                device,
-                scale_factor=1,
-                out_threshold=0.5):
-    net.eval()
-    img = torch.from_numpy(BasicDataset.preprocess(None, full_img, scale_factor, is_mask=False))
-    img = img.unsqueeze(0)
-    img = img.to(device=device, dtype=torch.float32)
+# def predict_img(net,
+#                 full_img,
+#                 device,
+#                 scale_factor=1,
+#                 out_threshold=0.5):
+#     net.eval()
+#     img = torch.from_numpy(BasicDataset.preprocess(None, full_img, scale_factor, is_mask=False))
+#     img = img.unsqueeze(0)
+#     img = img.to(device=device, dtype=torch.float32)
 
+#     with torch.no_grad():
+#         output = net(img).cpu()
+#         output = F.interpolate(output, (full_img.size[1], full_img.size[0]), mode='bilinear')
+#         if net.n_classes > 1:
+#             mask = output.argmax(dim=1)
+#         else:
+#             mask = torch.sigmoid(output) > out_threshold
+
+#     return mask[0].long().squeeze().numpy()
+def predict_img(net, img_in, device, scale_factor=1):
+    """
+    预测重建图像
+    
+    Args:
+        net: 重建模型
+        full_img: 输入图像（欠采样图像）
+        device: 计算设备
+        scale_factor: 缩放因子
+    
+    Returns:
+        重建后的图像，numpy array，形状 [H, W]
+    """
+    net.eval()
+    
+    # 预处理
+    img = torch.from_numpy(BasicDataset.preprocess(None, img_in, scale_factor, is_mask=False))
+    img = img.unsqueeze(0).to(device=device, dtype=torch.float32)
+    
     with torch.no_grad():
         output = net(img).cpu()
-        output = F.interpolate(output, (full_img.size[1], full_img.size[0]), mode='bilinear')
-        if net.n_classes > 1:
-            mask = output.argmax(dim=1)
-        else:
-            mask = torch.sigmoid(output) > out_threshold
-
-    return mask[0].long().squeeze().numpy()
-
+        output = F.interpolate(output, (img_in.size[1], img_in.size[0]), mode='bilinear')
+        output = torch.clamp(output, 0, 1)  # 确保在[0,1]范围内
+    
+    # 返回单通道图像 [H, W]
+    return output[0, 0].numpy()  # 假设单通道输出
 
 def get_args():
     parser = argparse.ArgumentParser(description='Predict masks from input images')
@@ -59,22 +84,51 @@ def get_output_filenames(args):
     return args.output or list(map(_generate_name, args.input))
 
 
-def mask_to_image(mask: np.ndarray, mask_values):
-    if isinstance(mask_values[0], list):
-        out = np.zeros((mask.shape[-2], mask.shape[-1], len(mask_values[0])), dtype=np.uint8)
-    elif mask_values == [0, 1]:
-        out = np.zeros((mask.shape[-2], mask.shape[-1]), dtype=bool)
+# def mask_to_image(mask: np.ndarray, mask_values):
+#     if isinstance(mask_values[0], list):
+#         out = np.zeros((mask.shape[-2], mask.shape[-1], len(mask_values[0])), dtype=np.uint8)
+#     elif mask_values == [0, 1]:
+#         out = np.zeros((mask.shape[-2], mask.shape[-1]), dtype=bool)
+#     else:
+#         out = np.zeros((mask.shape[-2], mask.shape[-1]), dtype=np.uint8)
+
+#     if mask.ndim == 3:
+#         mask = np.argmax(mask, axis=0)
+
+#     for i, v in enumerate(mask_values):
+#         out[mask == i] = v
+
+#     return Image.fromarray(out)
+def array_to_image(array: np.ndarray):
+    """
+    将重建图像数组转换为PIL Image（简化版）
+    假设输入范围[0,1]，形状[H,W]或[H,W,C]
+    
+    Args:
+        array: 重建图像数组，值域[0,1]
+    
+    Returns:
+        PIL Image对象
+    """
+    # 处理维度 [C, H, W] -> [H, W, C]
+    if array.ndim == 3 and array.shape[0] in [1, 3]:
+        array = np.transpose(array, (1, 2, 0))
+    
+    # 处理单通道 [H, W, 1] -> [H, W]
+    if array.ndim == 3 and array.shape[2] == 1:
+        array = array.squeeze(axis=2)
+    
+    # 归一化到[0, 255]
+    array = np.clip(array, 0, 1) * 255
+    array = array.astype(np.uint8)
+    
+    # 转换为PIL Image
+    if array.ndim == 2:
+        return Image.fromarray(array, mode='L')
+    elif array.ndim == 3 and array.shape[2] == 3:
+        return Image.fromarray(array, mode='RGB')
     else:
-        out = np.zeros((mask.shape[-2], mask.shape[-1]), dtype=np.uint8)
-
-    if mask.ndim == 3:
-        mask = np.argmax(mask, axis=0)
-
-    for i, v in enumerate(mask_values):
-        out[mask == i] = v
-
-    return Image.fromarray(out)
-
+        raise ValueError(f"Unsupported array shape: {array.shape}")
 
 if __name__ == '__main__':
     args = get_args()
@@ -83,7 +137,7 @@ if __name__ == '__main__':
     in_files = args.input
     out_files = get_output_filenames(args)
 
-    net = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+    net = UNet(n_channels=1, n_classes=args.classes, bilinear=args.bilinear)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Loading model {args.model}')
@@ -98,20 +152,20 @@ if __name__ == '__main__':
 
     for i, filename in enumerate(in_files):
         logging.info(f'Predicting image {filename} ...')
-        img = Image.open(filename)
+        img_und_in = Image.open(filename)
 
-        mask = predict_img(net=net,
-                           full_img=img,
+        img_full_pred = predict_img(net=net,
+                           img_in=img_und_in,
                            scale_factor=args.scale,
                            out_threshold=args.mask_threshold,
                            device=device)
 
         if not args.no_save:
             out_filename = out_files[i]
-            result = mask_to_image(mask, mask_values)
+            result = array_to_image(img_full_pred)
             result.save(out_filename)
             logging.info(f'Mask saved to {out_filename}')
 
         if args.viz:
             logging.info(f'Visualizing results for image {filename}, close to continue...')
-            plot_img_and_mask(img, mask)
+            plot_img_and_mask(img_und_in, img_full_pred)
