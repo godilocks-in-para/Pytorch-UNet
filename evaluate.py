@@ -89,12 +89,11 @@ from utils.utils import calculate_psnr, calculate_ssim
 #     avg_psnr = total_psnr / max(n_samples, 1)
 #     return avg_psnr
 
-@torch.inference_mode()
 def evaluate(model, val_loader, device, amp):
     model.eval()
     total_loss = 0
     total_psnr = 0
-    criterion = F.MSELoss()
+    criterion = torch.nn.MSELoss()
     
     with torch.no_grad():
         for batch in val_loader:

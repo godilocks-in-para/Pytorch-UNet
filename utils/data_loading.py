@@ -48,15 +48,8 @@ class BasicDataset(Dataset):
             raise RuntimeError(f'No input file found in {images_dir}, make sure you put your images there')
 
         logging.info(f'Creating dataset with {len(self.ids)} examples')
-        logging.info('Scanning mask files to determine unique values')
-        with Pool() as p:
-            unique = list(tqdm(
-                p.imap(partial(unique_mask_values, mask_dir=self.mask_dir, mask_suffix=self.mask_suffix), self.ids),
-                total=len(self.ids)
-            ))
-
-        self.mask_values = list(sorted(np.unique(np.concatenate(unique), axis=0).tolist()))
-        logging.info(f'Unique mask values: {self.mask_values}')
+        # 对于重建任务，不需要扫描mask文件获取unique values
+        self.mask_values = None  # 重建任务中不需要mask_values映射
 
     def __len__(self):
         return len(self.ids)
@@ -69,26 +62,16 @@ class BasicDataset(Dataset):
         pil_img = pil_img.resize((newW, newH), resample=Image.NEAREST if is_mask else Image.BICUBIC)
         img = np.asarray(pil_img)
 
-        if is_mask:
-            mask = np.zeros((newH, newW), dtype=np.int64)
-            for i, v in enumerate(mask_values):
-                if img.ndim == 2:
-                    mask[img == v] = i
-                else:
-                    mask[(img == v).all(-1)] = i
-
-            return mask
-
+        # 对于重建任务，两张图像（欠采样和全采样）都应该被当作图像（非mask）处理
+        if img.ndim == 2:
+            img = img[np.newaxis, ...]
         else:
-            if img.ndim == 2:
-                img = img[np.newaxis, ...]
-            else:
-                img = img.transpose((2, 0, 1))
+            img = img.transpose((2, 0, 1))
 
-            if (img > 1).any():
-                img = img / 255.0
+        if (img > 1).any():
+            img = img / 255.0
 
-            return img
+        return img
 
     def __getitem__(self, idx):
         name = self.ids[idx]
@@ -103,11 +86,12 @@ class BasicDataset(Dataset):
         assert img.size == mask.size, \
             f'Image and mask {name} should be the same size, but are {img.size} and {mask.size}'
 
-        img = self.preprocess(self.mask_values, img, self.scale, is_mask=False)
-        mask = self.preprocess(self.mask_values, mask, self.scale, is_mask=False)
+        # 两张图像都使用相同的预处理（是_mask=False）
+        img = self.preprocess(None, img, self.scale, is_mask=False)
+        mask = self.preprocess(None, mask, self.scale, is_mask=False)
 
         return {
             'img_und': torch.as_tensor(img.copy()).float().contiguous(),
-            'img_full': torch.as_tensor(mask.copy()).long().contiguous()
+            'img_full': torch.as_tensor(mask.copy()).float().contiguous()
         }
 

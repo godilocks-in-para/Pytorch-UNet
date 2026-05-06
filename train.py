@@ -107,7 +107,7 @@ def train_model(
 
                 with torch.autocast(device.type if device.type != 'mps' else 'cpu', enabled=amp):
                     img_full_pred = model(images_und)
-                    loss = criterion(img_full_pred.squeeze(1), true_image_full.float())
+                    loss = criterion(img_full_pred, true_image_full)
                         
 
                 optimizer.zero_grad(set_to_none=True)
@@ -120,13 +120,29 @@ def train_model(
                 pbar.update(images_und.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-                experiment.log({
+                # 每20个step记录一次图像
+                log_dict = {
                     'train loss': loss.item(),
                     'train PSNR': calculate_psnr(img_full_pred, true_image_full),
                     'train SSIM': calculate_ssim(img_full_pred, true_image_full),
                     'step': global_step,
                     'epoch': epoch
-                })
+                }
+                
+                if global_step % 20 == 0:
+                    # 记录第一张图像的欠采样、重建和真实图像
+                    try:
+                        und_img = images_und[0, 0].detach().cpu().numpy()
+                        pred_img = img_full_pred[0, 0].detach().cpu().numpy()
+                        true_img = true_image_full[0, 0].detach().cpu().numpy()
+                        
+                        log_dict['train/undersampled'] = wandb.Image(und_img, caption='Undersampled Input')
+                        log_dict['train/reconstructed'] = wandb.Image(pred_img, caption='Reconstructed')
+                        log_dict['train/ground_truth'] = wandb.Image(true_img, caption='Ground Truth')
+                    except:
+                        pass
+                
+                experiment.log(log_dict)
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
                 # Evaluation round
@@ -145,26 +161,36 @@ def train_model(
                         scheduler.step(val_loss)  # 监控验证损失（'min'模式）
                     
                         logging.info(f'Validation Loss: {val_loss:.6f}, Validation PSNR: {val_psnr:.2f} dB')
+                        
+                        val_log_dict = {
+                            'learning rate': optimizer.param_groups[0]['lr'],
+                            'validation loss': val_loss,
+                            'validation PSNR': val_psnr,
+                            'step': global_step,
+                            'epoch': epoch,
+                            **histograms
+                        }
+                        
+                        # 记录验证集中的第一张图像
                         try:
-                            experiment.log({
-                                'learning rate': optimizer.param_groups[0]['lr'],
-                                'validation loss': val_loss,
-                                'images_und': wandb.Image(images_und[0].cpu()),
-                                'images_full': {
-                                    'true': wandb.Image(true_image_full[0].float().cpu()),
-                                    'pred': wandb.Image(img_full_pred.argmax(dim=1)[0].float().cpu()),
-                                },
-                                'step': global_step,
-                                'epoch': epoch,
-                                **histograms
-                            })
+                            und_img = images_und[0, 0].detach().cpu().numpy()
+                            pred_img = img_full_pred[0, 0].detach().cpu().numpy()
+                            true_img = true_image_full[0, 0].detach().cpu().numpy()
+                            
+                            val_log_dict['val/undersampled'] = wandb.Image(und_img, caption='Val Undersampled')
+                            val_log_dict['val/reconstructed'] = wandb.Image(pred_img, caption='Val Reconstructed')
+                            val_log_dict['val/ground_truth'] = wandb.Image(true_img, caption='Val Ground Truth')
+                        except:
+                            pass
+                        
+                        try:
+                            experiment.log(val_log_dict)
                         except:
                             pass
 
         if save_checkpoint:
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
-            state_dict['mask_values'] = dataset.mask_values
             torch.save(state_dict, str(dir_checkpoint / 'checkpoint_epoch{}.pth'.format(epoch)))
             logging.info(f'Checkpoint {epoch} saved!')
 
@@ -206,7 +232,8 @@ if __name__ == '__main__':
 
     if args.load:
         state_dict = torch.load(args.load, map_location=device)
-        del state_dict['mask_values']
+        # 移除旧的mask_values键（如果存在）以支持向后兼容
+        state_dict.pop('mask_values', None)
         model.load_state_dict(state_dict)
         logging.info(f'Model loaded from {args.load}')
 

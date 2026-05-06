@@ -5,6 +5,7 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 from PIL import Image
 from torchvision import transforms
 
@@ -37,7 +38,7 @@ def predict_img(net, img_in, device, scale_factor=1):
     
     Args:
         net: 重建模型
-        full_img: 输入图像（欠采样图像）
+        img_in: 输入图像（欠采样图像）
         device: 计算设备
         scale_factor: 缩放因子
     
@@ -59,20 +60,18 @@ def predict_img(net, img_in, device, scale_factor=1):
     return output[0, 0].numpy()  # 假设单通道输出
 
 def get_args():
-    parser = argparse.ArgumentParser(description='Predict masks from input images')
+    parser = argparse.ArgumentParser(description='Predict reconstructed images from undersampled input images')
     parser.add_argument('--model', '-m', default='MODEL.pth', metavar='FILE',
                         help='Specify the file in which the model is stored')
     parser.add_argument('--input', '-i', metavar='INPUT', nargs='+', help='Filenames of input images', required=True)
     parser.add_argument('--output', '-o', metavar='OUTPUT', nargs='+', help='Filenames of output images')
     parser.add_argument('--viz', '-v', action='store_true',
                         help='Visualize the images as they are processed')
-    parser.add_argument('--no-save', '-n', action='store_true', help='Do not save the output masks')
-    parser.add_argument('--mask-threshold', '-t', type=float, default=0.5,
-                        help='Minimum probability value to consider a mask pixel white')
-    parser.add_argument('--scale', '-s', type=float, default=0.5,
+    parser.add_argument('--no-save', '-n', action='store_true', help='Do not save the output images')
+    parser.add_argument('--scale', '-s', type=float, default=1.0,
                         help='Scale factor for the input images')
     parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
-    parser.add_argument('--classes', '-c', type=int, default=2, help='Number of classes')
+    parser.add_argument('--classes', '-c', type=int, default=1, help='Number of output channels')
     
     return parser.parse_args()
 
@@ -145,7 +144,8 @@ if __name__ == '__main__':
 
     net.to(device=device)
     state_dict = torch.load(args.model, map_location=device)
-    mask_values = state_dict.pop('mask_values', [0, 1])
+    # 移除旧的mask_values键（如果存在）以支持向后兼容
+    state_dict.pop('mask_values', None)
     net.load_state_dict(state_dict)
 
     logging.info('Model loaded!')
@@ -156,16 +156,24 @@ if __name__ == '__main__':
 
         img_full_pred = predict_img(net=net,
                            img_in=img_und_in,
-                           scale_factor=args.scale,
-                           out_threshold=args.mask_threshold,
-                           device=device)
+                           device=device,
+                           scale_factor=args.scale)
 
         if not args.no_save:
             out_filename = out_files[i]
             result = array_to_image(img_full_pred)
             result.save(out_filename)
-            logging.info(f'Mask saved to {out_filename}')
+            logging.info(f'Reconstruction saved to {out_filename}')
 
         if args.viz:
             logging.info(f'Visualizing results for image {filename}, close to continue...')
-            plot_img_and_mask(img_und_in, img_full_pred)
+            # 可视化：显示输入和预测的重建图像
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            axes[0].imshow(np.array(img_und_in), cmap='gray')
+            axes[0].set_title('Undersampled Input')
+            axes[0].axis('off')
+            axes[1].imshow(img_full_pred, cmap='gray')
+            axes[1].set_title('Reconstructed Image')
+            axes[1].axis('off')
+            plt.tight_layout()
+            plt.show()
