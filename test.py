@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from pathlib import Path
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from unet import UNet
@@ -78,30 +78,53 @@ def test_model(model, test_loader, device, save_visuals=True):
                 all_psnr_after.append(psnr_after)
                 all_ssim_after.append(ssim_after)
                 
-                # Save visual comparison
-                if save_visuals and batch_idx < 5:  # Save first 5 batches
-                    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+                # Save visual comparison with improved formatting
+                if save_visuals and batch_idx < 10:  # Save first 10 batches
+                    # Create figure with three subplots
+                    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+                    fig.suptitle(f'MRI Reconstruction Comparison - Sample {batch_idx * batch_size + i}', 
+                                fontsize=16, fontweight='bold', y=0.98)
                     
                     # Handle channel dimension
                     und_display = und_img[0] if und_img.ndim == 3 else und_img
                     pred_display = pred_img[0] if pred_img.ndim == 3 else pred_img
                     true_display = true_img[0] if true_img.ndim == 3 else true_img
                     
-                    axes[0].imshow(und_display, cmap='gray')
-                    axes[0].set_title(f'Undersampled\nPSNR: {psnr_before:.2f} dB\nSSIM: {ssim_before:.4f}')
+                    # Undersampled image
+                    im0 = axes[0].imshow(und_display, cmap='gray', vmin=0, vmax=1)
+                    axes[0].set_title('Undersampled (Input)\nLow Resolution', fontsize=12, fontweight='bold', pad=10)
+                    axes[0].text(0.5, -0.15, f'PSNR: {psnr_before:.2f} dB\nSSIM: {ssim_before:.4f}', 
+                                transform=axes[0].transAxes, ha='center', fontsize=11, 
+                                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
                     axes[0].axis('off')
                     
-                    axes[1].imshow(pred_display, cmap='gray')
-                    axes[1].set_title(f'Reconstructed\nPSNR: {psnr_after:.2f} dB\nSSIM: {ssim_after:.4f}')
+                    # Reconstructed image
+                    im1 = axes[1].imshow(pred_display, cmap='gray', vmin=0, vmax=1)
+                    axes[1].set_title('Reconstructed (Predicted)\nNetwork Output', fontsize=12, fontweight='bold', pad=10)
+                    axes[1].text(0.5, -0.15, f'PSNR: {psnr_after:.2f} dB\nSSIM: {ssim_after:.4f}', 
+                                transform=axes[1].transAxes, ha='center', fontsize=11,
+                                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
                     axes[1].axis('off')
                     
-                    axes[2].imshow(true_display, cmap='gray')
-                    axes[2].set_title('Ground Truth')
+                    # Ground truth image
+                    im2 = axes[2].imshow(true_display, cmap='gray', vmin=0, vmax=1)
+                    axes[2].set_title('Ground Truth (Reference)\nFully Sampled', fontsize=12, fontweight='bold', pad=10)
+                    axes[2].text(0.5, -0.15, f'Reference Image\nImprovement: +{psnr_after - psnr_before:.2f} dB', 
+                                transform=axes[2].transAxes, ha='center', fontsize=11,
+                                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5))
                     axes[2].axis('off')
                     
-                    plt.suptitle(f'Test Sample {batch_idx * batch_size + i}')
+                    # Add colorbars
+                    cbar0 = plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+                    cbar0.set_label('Intensity', rotation=270, labelpad=15)
+                    cbar1 = plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+                    cbar1.set_label('Intensity', rotation=270, labelpad=15)
+                    cbar2 = plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+                    cbar2.set_label('Intensity', rotation=270, labelpad=15)
+                    
                     plt.tight_layout()
-                    plt.savefig(str(dir_results / f'comparison_batch{batch_idx}_sample{i}.png'), dpi=100, bbox_inches='tight')
+                    save_path = dir_results / f'comparison_batch{batch_idx:03d}_sample{i:02d}.png'
+                    plt.savefig(str(save_path), dpi=150, bbox_inches='tight', facecolor='white')
                     plt.close()
     
     # Calculate average metrics
@@ -156,15 +179,8 @@ if __name__ == '__main__':
     model.load_state_dict(state_dict)
     logging.info('Model loaded successfully!')
     
-    # Create dataset
-    dataset = BasicDataset(dir_img_und, dir_img_full, args.scale)
-    
-    # Use last 20% as test set (following common split patterns)
-    n_total = len(dataset)
-    n_test = int(0.2 * n_total)
-    n_train_val = n_total - n_test
-    _, test_set = random_split(dataset, [n_train_val, n_test], 
-                               generator=torch.Generator().manual_seed(0))
+    # Create test dataset using deterministic split
+    test_set = BasicDataset(dir_img_und, dir_img_full, args.scale, split='test')
     
     test_loader = torch.utils.data.DataLoader(test_set, batch_size=args.batch_size, 
                                               shuffle=False, num_workers=0, pin_memory=True)

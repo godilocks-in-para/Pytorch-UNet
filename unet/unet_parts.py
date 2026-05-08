@@ -68,10 +68,23 @@ class Up(nn.Module):
         return self.conv(x)
 
 
+# class OutConv(nn.Module):
+#     def __init__(self, in_channels, out_channels):
+#         super(OutConv, self).__init__()
+#         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+#     def forward(self, x):
+#         return self.conv(x)
+    
 class OutConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, use_sigmoid=True):
         super(OutConv, self).__init__()
         self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+        self.use_sigmoid = use_sigmoid
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        return self.conv(x)
+        x = self.conv(x)
+        if self.use_sigmoid:
+            x = self.sigmoid(x)
+        return x

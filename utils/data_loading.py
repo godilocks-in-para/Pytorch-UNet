@@ -36,18 +36,36 @@ def unique_mask_values(idx, mask_dir, mask_suffix):
 
 
 class BasicDataset(Dataset):
-    def __init__(self, images_dir: str, mask_dir: str, scale: float = 1.0, mask_suffix: str = ''):
+    def __init__(self, images_dir: str, mask_dir: str, scale: float = 1.0, mask_suffix: str = '', split: str = None):
+        """
+        Args:
+            images_dir: Path to undersampled images directory
+            mask_dir: Path to fully-sampled images directory
+            scale: Image scaling factor
+            mask_suffix: Suffix for mask files
+            split: Filter by split ('train', 'val', 'test', or None for all)
+        """
         self.images_dir = Path(images_dir)
         self.mask_dir = Path(mask_dir)
         assert 0 < scale <= 1, 'Scale must be between 0 and 1'
         self.scale = scale
         self.mask_suffix = mask_suffix
+        self.split = split
 
-        self.ids = [splitext(file)[0] for file in listdir(images_dir) if isfile(join(images_dir, file)) and not file.startswith('.')]
+        # Get all files and filter by split if specified
+        all_ids = [splitext(file)[0] for file in listdir(images_dir) if isfile(join(images_dir, file)) and not file.startswith('.')]
+        
+        # Filter by split: files end with _train, _val, or _test
+        if split is not None:
+            assert split in ['train', 'val', 'test'], f"Split must be 'train', 'val', or 'test', got {split}"
+            self.ids = [id for id in all_ids if id.endswith(f'_{split}')]
+        else:
+            self.ids = all_ids
+        
         if not self.ids:
-            raise RuntimeError(f'No input file found in {images_dir}, make sure you put your images there')
+            raise RuntimeError(f'No input file found in {images_dir} (split={split}), make sure you put your images there')
 
-        logging.info(f'Creating dataset with {len(self.ids)} examples')
+        logging.info(f'Creating {split or "combined"} dataset with {len(self.ids)} examples')
         # 对于重建任务，不需要扫描mask文件获取unique values
         self.mask_values = None  # 重建任务中不需要mask_values映射
 

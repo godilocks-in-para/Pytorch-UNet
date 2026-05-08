@@ -34,21 +34,21 @@ def train_model(
         val_percent: float = 0.1,
         test_percent: float = 0.1,
         save_checkpoint: bool = True,
-        img_scale: float = 0.5,
+        img_scale: float = 1,
         amp: bool = False,
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
 ):
-    # 1. Create dataset 
-    dataset = BasicDataset(dir_img_und, dir_img_full, img_scale)
-
-    # 2. Split into train / validation partitions
-    n_val = int(len(dataset) * val_percent)
-    n_test = int(len(dataset) * test_percent)
-    n_train = len(dataset) - n_val - n_test
-    train_set, val_set, test_set = random_split(dataset, [n_train, n_val, n_test], generator=torch.Generator().manual_seed(0))
-
+    # 1. Create datasets based on split (from filenames: _train, _val, _test)
+    train_set = BasicDataset(dir_img_und, dir_img_full, img_scale, split='train')
+    val_set = BasicDataset(dir_img_und, dir_img_full, img_scale, split='val')
+    test_set = BasicDataset(dir_img_und, dir_img_full, img_scale, split='test')
+    
+    n_train = len(train_set)
+    n_val = len(val_set)
+    n_test = len(test_set)
+    
     # 3. Create data loaders
     loader_args = dict(batch_size=batch_size, num_workers=os.cpu_count(), pin_memory=True)
     train_loader = DataLoader(train_set, shuffle=True, **loader_args)
@@ -85,7 +85,7 @@ def train_model(
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
 
     # 修改损失函数：使用 MSE Loss (L2 Loss)
-    criterion = nn.MSELoss()  # 或者 nn.L1Loss() 作为 L1 Loss
+    criterion = nn.MSELoss()
 
     global_step = 0
 
@@ -120,74 +120,124 @@ def train_model(
                 pbar.update(images_und.shape[0])
                 global_step += 1
                 epoch_loss += loss.item()
-                # 每20个step记录一次图像
-                log_dict = {
-                    'train loss': loss.item(),
+
+                if global_step % 100 == 0:
+                    experiment.log({
                     'train PSNR': calculate_psnr(img_full_pred, true_image_full),
                     'train SSIM': calculate_ssim(img_full_pred, true_image_full),
                     'step': global_step,
-                    'epoch': epoch
-                }
-                
-                if global_step % 20 == 0:
+                    'epoch': epoch})
+                    
+                if global_step % 400 == 0:
                     # 记录第一张图像的欠采样、重建和真实图像
                     try:
                         und_img = images_und[0, 0].detach().cpu().numpy()
                         pred_img = img_full_pred[0, 0].detach().cpu().numpy()
                         true_img = true_image_full[0, 0].detach().cpu().numpy()
-                        
-                        log_dict['train/undersampled'] = wandb.Image(und_img, caption='Undersampled Input')
-                        log_dict['train/reconstructed'] = wandb.Image(pred_img, caption='Reconstructed')
-                        log_dict['train/ground_truth'] = wandb.Image(true_img, caption='Ground Truth')
+                        log_dict_400={}
+                        log_dict_400['train/undersampled'] = wandb.Image(und_img, caption='Undersampled Input')
+                        log_dict_400['train/reconstructed'] = wandb.Image(pred_img, caption='Reconstructed')
+                        log_dict_400['train/ground_truth'] = wandb.Image(true_img, caption='Ground Truth')
                     except:
                         pass
-                
-                experiment.log(log_dict)
+
+                if global_step % 10 == 0:
+                    log_dict_10 = {
+                    'train loss': loss.item(),
+                    'step': global_step,
+                    'epoch': epoch
+                    }
+                    experiment.log(log_dict_10)
+                    
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
-                # Evaluation round
-                division_step = (n_train // (5 * batch_size))
-                if division_step > 0:
-                    if global_step % division_step == 0:
-                        histograms = {}
-                        for tag, value in model.named_parameters():
-                            tag = tag.replace('/', '.')
-                            if not (torch.isinf(value) | torch.isnan(value)).any():
-                                histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                            if not (torch.isinf(value.grad) | torch.isnan(value.grad)).any():
-                                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
-
-                        val_loss, val_psnr = evaluate(model, val_loader, device, amp)  # 新写的评估函数
-                        scheduler.step(val_loss)  # 监控验证损失（'min'模式）
+            # Evaluation round
                     
-                        logging.info(f'Validation Loss: {val_loss:.6f}, Validation PSNR: {val_psnr:.2f} dB')
-                        
-                        val_log_dict = {
-                            'learning rate': optimizer.param_groups[0]['lr'],
-                            'validation loss': val_loss,
-                            'validation PSNR': val_psnr,
-                            'step': global_step,
-                            'epoch': epoch,
-                            **histograms
-                        }
-                        
-                        # 记录验证集中的第一张图像
-                        try:
-                            und_img = images_und[0, 0].detach().cpu().numpy()
-                            pred_img = img_full_pred[0, 0].detach().cpu().numpy()
-                            true_img = true_image_full[0, 0].detach().cpu().numpy()
-                            
-                            val_log_dict['val/undersampled'] = wandb.Image(und_img, caption='Val Undersampled')
-                            val_log_dict['val/reconstructed'] = wandb.Image(pred_img, caption='Val Reconstructed')
-                            val_log_dict['val/ground_truth'] = wandb.Image(true_img, caption='Val Ground Truth')
-                        except:
-                            pass
-                        
-                        try:
-                            experiment.log(val_log_dict)
-                        except:
-                            pass
+            # histograms = {}
+            # for tag, value in model.named_parameters():
+            #     tag = tag.replace('/', '.')
+            #     if not (torch.isinf(value) | torch.isnan(value)).any():
+            #         histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
+            #     if not (torch.isinf(value.grad) | torch.isnan(value.grad)).any():
+            #         histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
+            val_loss, val_psnr, val_ssim = evaluate(model, val_loader, device, amp)  # 新写的评估函数
+            scheduler.step(val_loss)  # 监控验证损失（'min'模式）
+                        
+            logging.info(f'Validation Loss: {val_loss:.6f}, Validation PSNR: {val_psnr:.2f} dB, Validation SSIM: {val_ssim:.4f}')
+                            
+            val_log_dict = {
+                'learning rate': optimizer.param_groups[0]['lr'],
+                'validation loss': val_loss,
+                'validation PSNR': val_psnr,
+                'validation SSIM': val_ssim,
+                'epoch': epoch,
+                'step': global_step,
+                # **histograms
+            }
+
+
+            
+            # =========================================
+            # Validation visualization
+            # =========================================
+
+            try:
+                model.eval()
+
+                with torch.no_grad():
+
+                    for idx, image in enumerate(val_loader):
+
+                        # 只保存前5张
+                        if idx >= 5:
+                            break
+
+                        images_und_val = image['img_und'].to(
+                            device=device,
+                            dtype=torch.float32,
+                            memory_format=torch.channels_last
+                        )
+
+                        true_image_full_val = image['img_full'].to(
+                            device=device,
+                            dtype=torch.float32
+                        )
+
+                        with torch.autocast(
+                            device.type if device.type != 'mps' else 'cpu',
+                            enabled=amp
+                        ):
+                            img_full_pred_val = model(images_und_val)
+
+                        # 只取batch中的第一张
+                        und_img_val = images_und_val[0, 0].detach().cpu().numpy()
+                        pred_img_val = img_full_pred_val[0, 0].detach().cpu().numpy()
+                        true_img_val = true_image_full_val[0, 0].detach().cpu().numpy()
+
+                        val_log_dict[f'val/undersampled_{idx}'] = wandb.Image(
+                            und_img_val,
+                            caption=f'Val Undersampled {idx}'
+                        )
+
+                        val_log_dict[f'val/reconstructed_{idx}'] = wandb.Image(
+                            pred_img_val,
+                            caption=f'Val Reconstructed {idx}'
+                        )
+
+                        val_log_dict[f'val/ground_truth_{idx}'] = wandb.Image(
+                            true_img_val,
+                            caption=f'Val Ground Truth {idx}'
+                        )
+
+            except Exception as e:
+                print(e)
+            
+            try:
+                experiment.log(val_log_dict)
+            except:
+                pass
+            
         if save_checkpoint:
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()

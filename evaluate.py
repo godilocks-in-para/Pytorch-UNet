@@ -93,6 +93,7 @@ def evaluate(model, val_loader, device, amp):
     model.eval()
     total_loss = 0
     total_psnr = 0
+    total_ssim = 0
     criterion = torch.nn.MSELoss()
     
     with torch.no_grad():
@@ -107,10 +108,13 @@ def evaluate(model, val_loader, device, amp):
                 # 使用PSNR函数
                 psnr_value = calculate_psnr(img_full_pred, true_image_full, max_val=1.0)
                 total_psnr += psnr_value
+                ssim_value = calculate_ssim(img_full_pred, true_image_full, max_val=1.0)
+                total_ssim += ssim_value
             
             total_loss += loss.item()
     model.train()
     avg_loss = total_loss / len(val_loader)
     avg_psnr = total_psnr / len(val_loader)
-    return avg_loss, avg_psnr
+    avg_ssim = total_ssim / len(val_loader)
+    return avg_loss, avg_psnr, avg_ssim
 
