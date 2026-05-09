@@ -78,53 +78,57 @@ def test_model(model, test_loader, device, save_visuals=True):
                 all_psnr_after.append(psnr_after)
                 all_ssim_after.append(ssim_after)
                 
-                # Save visual comparison with improved formatting
+                # Save visual comparison with improved formatting (320x320 per image)
                 if save_visuals and batch_idx < 10:  # Save first 10 batches
-                    # Create figure with three subplots
-                    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-                    fig.suptitle(f'MRI Reconstruction Comparison - Sample {batch_idx * batch_size + i}', 
-                                fontsize=16, fontweight='bold', y=0.98)
-                    
                     # Handle channel dimension
                     und_display = und_img[0] if und_img.ndim == 3 else und_img
                     pred_display = pred_img[0] if pred_img.ndim == 3 else pred_img
                     true_display = true_img[0] if true_img.ndim == 3 else true_img
                     
+                    # Create figure with three subplots (each 320x320)
+                    fig = plt.figure(figsize=(16, 6))
+                    gs = fig.add_gridspec(1, 3, wspace=0.35, hspace=0.5, top=0.90, bottom=0.12, left=0.08, right=0.95)
+                    
+                    # Add overall title at top
+                    fig.suptitle(f'MRI Reconstruction Comparison - Sample {batch_idx * batch_size + i}', 
+                                fontsize=16, fontweight='bold', y=0.98)
+                    
+                    axes = [fig.add_subplot(gs[0, i]) for i in range(3)]
+                    
                     # Undersampled image
-                    im0 = axes[0].imshow(und_display, cmap='gray', vmin=0, vmax=1)
-                    axes[0].set_title('Undersampled (Input)\nLow Resolution', fontsize=12, fontweight='bold', pad=10)
-                    axes[0].text(0.5, -0.15, f'PSNR: {psnr_before:.2f} dB\nSSIM: {ssim_before:.4f}', 
+                    im0 = axes[0].imshow(und_display, cmap='gray', vmin=0, vmax=1, aspect='equal')
+                    axes[0].set_title('① Undersampled Input\n(Low Resolution)', 
+                                     fontsize=13, fontweight='bold', pad=15, color='#B8860B')
+                    axes[0].text(0.5, -0.18, f'PSNR: {psnr_before:.2f} dB\nSSIM: {ssim_before:.4f}', 
                                 transform=axes[0].transAxes, ha='center', fontsize=11, 
-                                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+                                bbox=dict(boxstyle='round,pad=0.6', facecolor='wheat', alpha=0.8, edgecolor='gray', linewidth=1.5))
                     axes[0].axis('off')
                     
                     # Reconstructed image
-                    im1 = axes[1].imshow(pred_display, cmap='gray', vmin=0, vmax=1)
-                    axes[1].set_title('Reconstructed (Predicted)\nNetwork Output', fontsize=12, fontweight='bold', pad=10)
-                    axes[1].text(0.5, -0.15, f'PSNR: {psnr_after:.2f} dB\nSSIM: {ssim_after:.4f}', 
+                    im1 = axes[1].imshow(pred_display, cmap='gray', vmin=0, vmax=1, aspect='equal')
+                    axes[1].set_title('② Reconstructed Output\n(Network Prediction)', 
+                                     fontsize=13, fontweight='bold', pad=15, color='#4169E1')
+                    axes[1].text(0.5, -0.18, f'PSNR: {psnr_after:.2f} dB\nSSIM: {ssim_after:.4f}', 
                                 transform=axes[1].transAxes, ha='center', fontsize=11,
-                                bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.5))
+                                bbox=dict(boxstyle='round,pad=0.6', facecolor='lightblue', alpha=0.8, edgecolor='gray', linewidth=1.5))
                     axes[1].axis('off')
                     
                     # Ground truth image
-                    im2 = axes[2].imshow(true_display, cmap='gray', vmin=0, vmax=1)
-                    axes[2].set_title('Ground Truth (Reference)\nFully Sampled', fontsize=12, fontweight='bold', pad=10)
-                    axes[2].text(0.5, -0.15, f'Reference Image\nImprovement: +{psnr_after - psnr_before:.2f} dB', 
+                    im2 = axes[2].imshow(true_display, cmap='gray', vmin=0, vmax=1, aspect='equal')
+                    axes[2].set_title('③ Ground Truth\n(Fully Sampled Reference)', 
+                                     fontsize=13, fontweight='bold', pad=15, color='#228B22')
+                    axes[2].text(0.5, -0.18, f'Improvement: +{psnr_after - psnr_before:.2f} dB\nSSIM Gain: +{ssim_after - ssim_before:.4f}', 
                                 transform=axes[2].transAxes, ha='center', fontsize=11,
-                                bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.5))
+                                bbox=dict(boxstyle='round,pad=0.6', facecolor='lightgreen', alpha=0.8, edgecolor='gray', linewidth=1.5))
                     axes[2].axis('off')
                     
-                    # Add colorbars
-                    cbar0 = plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
-                    cbar0.set_label('Intensity', rotation=270, labelpad=15)
-                    cbar1 = plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
-                    cbar1.set_label('Intensity', rotation=270, labelpad=15)
-                    cbar2 = plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
-                    cbar2.set_label('Intensity', rotation=270, labelpad=15)
+                    # Ensure 320x320 display
+                    for ax, im in zip(axes, [im0, im1, im2]):
+                        ax.set_aspect('equal')
+                        ax.margins(0)
                     
-                    plt.tight_layout()
                     save_path = dir_results / f'comparison_batch{batch_idx:03d}_sample{i:02d}.png'
-                    plt.savefig(str(save_path), dpi=150, bbox_inches='tight', facecolor='white')
+                    plt.savefig(str(save_path), dpi=120, bbox_inches='tight', facecolor='white', pad_inches=0.15)
                     plt.close()
     
     # Calculate average metrics

@@ -128,18 +128,18 @@ def train_model(
                     'step': global_step,
                     'epoch': epoch})
                     
-                if global_step % 400 == 0:
-                    # 记录第一张图像的欠采样、重建和真实图像
-                    try:
-                        und_img = images_und[0, 0].detach().cpu().numpy()
-                        pred_img = img_full_pred[0, 0].detach().cpu().numpy()
-                        true_img = true_image_full[0, 0].detach().cpu().numpy()
-                        log_dict_400={}
-                        log_dict_400['train/undersampled'] = wandb.Image(und_img, caption='Undersampled Input')
-                        log_dict_400['train/reconstructed'] = wandb.Image(pred_img, caption='Reconstructed')
-                        log_dict_400['train/ground_truth'] = wandb.Image(true_img, caption='Ground Truth')
-                    except:
-                        pass
+                # if global_step % 400 == 0:
+                #     # 记录第一张图像的欠采样、重建和真实图像
+                #     try:
+                #         und_img = images_und[0, 0].detach().cpu().numpy()
+                #         pred_img = img_full_pred[0, 0].detach().cpu().numpy()
+                #         true_img = true_image_full[0, 0].detach().cpu().numpy()
+                #         log_dict_400={}
+                #         log_dict_400['train/undersampled'] = wandb.Image(und_img, caption='Undersampled Input')
+                #         log_dict_400['train/reconstructed'] = wandb.Image(pred_img, caption='Reconstructed')
+                #         log_dict_400['train/ground_truth'] = wandb.Image(true_img, caption='Ground Truth')
+                #     except:
+                #         pass
 
                 if global_step % 10 == 0:
                     log_dict_10 = {
@@ -182,56 +182,56 @@ def train_model(
             # Validation visualization
             # =========================================
 
-            try:
-                model.eval()
+            # try:
+            #     model.eval()
 
-                with torch.no_grad():
+            #     with torch.no_grad():
 
-                    for idx, image in enumerate(val_loader):
+            #         for idx, image in enumerate(val_loader):
 
-                        # 只保存前5张
-                        if idx >= 5:
-                            break
+            #             # 只保存前5张
+            #             if idx >= 5:
+            #                 break
 
-                        images_und_val = image['img_und'].to(
-                            device=device,
-                            dtype=torch.float32,
-                            memory_format=torch.channels_last
-                        )
+            #             images_und_val = image['img_und'].to(
+            #                 device=device,
+            #                 dtype=torch.float32,
+            #                 memory_format=torch.channels_last
+            #             )
 
-                        true_image_full_val = image['img_full'].to(
-                            device=device,
-                            dtype=torch.float32
-                        )
+            #             true_image_full_val = image['img_full'].to(
+            #                 device=device,
+            #                 dtype=torch.float32
+            #             )
 
-                        with torch.autocast(
-                            device.type if device.type != 'mps' else 'cpu',
-                            enabled=amp
-                        ):
-                            img_full_pred_val = model(images_und_val)
+            #             with torch.autocast(
+            #                 device.type if device.type != 'mps' else 'cpu',
+            #                 enabled=amp
+            #             ):
+            #                 img_full_pred_val = model(images_und_val)
 
-                        # 只取batch中的第一张
-                        und_img_val = images_und_val[0, 0].detach().cpu().numpy()
-                        pred_img_val = img_full_pred_val[0, 0].detach().cpu().numpy()
-                        true_img_val = true_image_full_val[0, 0].detach().cpu().numpy()
+            #             # 只取batch中的第一张
+            #             und_img_val = images_und_val[0, 0].detach().cpu().numpy()
+            #             pred_img_val = img_full_pred_val[0, 0].detach().cpu().numpy()
+            #             true_img_val = true_image_full_val[0, 0].detach().cpu().numpy()
 
-                        val_log_dict[f'val/undersampled_{idx}'] = wandb.Image(
-                            und_img_val,
-                            caption=f'Val Undersampled {idx}'
-                        )
+            #             val_log_dict[f'val/undersampled_{idx}'] = wandb.Image(
+            #                 und_img_val,
+            #                 caption=f'Val Undersampled {idx}'
+            #             )
 
-                        val_log_dict[f'val/reconstructed_{idx}'] = wandb.Image(
-                            pred_img_val,
-                            caption=f'Val Reconstructed {idx}'
-                        )
+            #             val_log_dict[f'val/reconstructed_{idx}'] = wandb.Image(
+            #                 pred_img_val,
+            #                 caption=f'Val Reconstructed {idx}'
+            #             )
 
-                        val_log_dict[f'val/ground_truth_{idx}'] = wandb.Image(
-                            true_img_val,
-                            caption=f'Val Ground Truth {idx}'
-                        )
+            #             val_log_dict[f'val/ground_truth_{idx}'] = wandb.Image(
+            #                 true_img_val,
+            #                 caption=f'Val Ground Truth {idx}'
+            #             )
 
-            except Exception as e:
-                print(e)
+            # except Exception as e:
+            #     print(e)
             
             try:
                 experiment.log(val_log_dict)
