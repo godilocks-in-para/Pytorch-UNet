@@ -1,0 +1,15 @@
+TEST METRICS
+============================================================
+Test Loss:                 0.001328
+
+Before Reconstruction:
+  PSNR: 18.53 ¡À 1.97 dB
+  SSIM: 0.6062 ¡À 0.0266
+
+After Reconstruction:
+  PSNR: 28.97 ¡À 1.34 dB
+  SSIM: 0.9237 ¡À 0.0135
+
+Improvement:
+  PSNR: +10.44 dB (56.4%)
+  SSIM: +0.3176 (52.4%)
